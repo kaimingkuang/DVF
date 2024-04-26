@@ -8,10 +8,13 @@ import numpy as np
 from pcdet.models import load_data_to_gpu
 import copy
 import pcdet.datasets.augmentor.augmentor_utils as uti
+from collections import defaultdict
+import wandb
 
 
 def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, accumulated_iter, optim_cfg,
-                    rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False):
+                    rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False, enable_wandb=False,
+                    debug=False):
     if total_it_each_epoch == len(train_loader):
         dataloader_iter = iter(train_loader)
 
@@ -19,7 +22,10 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         pbar = tqdm.tqdm(total=total_it_each_epoch, leave=leave_pbar, desc='train', dynamic_ncols=True)
 
     accus = 1
+    loss_train = defaultdict(float)
 
+    if debug:
+        total_it_each_epoch = 5
     for cur_it in range(total_it_each_epoch):
         try:
             batch = next(dataloader_iter)
@@ -43,7 +49,6 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
 
         loss, tb_dict, disp_dict = model_func(model, batch)
         loss = loss/accus
-        
         loss.backward()
 
         if ((cur_it + 1) % accus) == 0:
@@ -66,6 +71,15 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
                 tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
                 for key, val in tb_dict.items():
                     tb_log.add_scalar('train/' + key, val, accumulated_iter)
+            
+        for key, val in tb_dict.items():
+            loss_train[key] += val
+        
+    for k in loss_train.keys():
+        loss_train[k] /= total_it_each_epoch
+    if enable_wandb:
+        wandb.log(loss_train)
+
     if rank == 0:
         pbar.close()
     return accumulated_iter
@@ -73,7 +87,7 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
 def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_cfg,
                 start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, train_sampler=None,
                 lr_warmup_scheduler=None, ckpt_save_interval=1, max_ckpt_save_num=50,
-                merge_all_iters_to_one_epoch=False):
+                merge_all_iters_to_one_epoch=False, enable_wandb=False, debug=False):
     accumulated_iter = start_iter
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
         total_it_each_epoch = len(train_loader)
@@ -99,7 +113,9 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
                 rank=rank, tbar=tbar, tb_log=tb_log,
                 leave_pbar=(cur_epoch + 1 == total_epochs),
                 total_it_each_epoch=total_it_each_epoch,
-                dataloader_iter=dataloader_iter
+                dataloader_iter=dataloader_iter,
+                enable_wandb=enable_wandb,
+                debug=debug,
             )
 
             # save trained model

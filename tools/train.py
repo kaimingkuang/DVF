@@ -1,5 +1,6 @@
 import os
 import argparse
+import time
 import datetime
 import glob
 from pathlib import Path
@@ -8,6 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from tensorboardX import SummaryWriter
+import wandb
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
 from pcdet.datasets import build_dataloader
@@ -24,7 +26,7 @@ def parse_config():
     parser.add_argument('--batch_size', type=int, default=None, required=False, help='batch size for training')
     parser.add_argument('--epochs', type=int, default=None, required=False, help='number of epochs to train for')
     parser.add_argument('--workers', type=int, default=0, help='number of workers for dataloader')
-    parser.add_argument('--extra_tag', type=str, default='default', help='extra tag for this experiment')
+    # parser.add_argument('--extra_tag', type=str, default='default', help='extra tag for this experiment')
     parser.add_argument('--ckpt', type=str, default=None, help='checkpoint to start from')
     parser.add_argument('--pretrained_model', type=str, default=None, help='pretrained_model')
     parser.add_argument('--launcher', choices=['none', 'pytorch', 'slurm'], default='none')
@@ -43,6 +45,9 @@ def parse_config():
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
 
     parser.add_argument("--gpu", type=str, default="", help="GPU index.")
+    parser.add_argument("--wandb", action="store_true", help="Enable WandB.")
+    parser.add_argument("--tag", type=str, default="")
+    parser.add_argument("--debug", action="store_true", help="Debug mode.")
 
     args = parser.parse_args()
 
@@ -74,11 +79,12 @@ def main():
         args.batch_size = args.batch_size // total_gpus
 
     args.epochs = cfg.OPTIMIZATION.NUM_EPOCHS if args.epochs is None else args.epochs
+    args.epochs = 2 if args.debug else args.epochs
 
     if args.fix_random_seed:
         common_utils.set_random_seed(666)
 
-    output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
+    output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.tag
     ckpt_dir = output_dir / 'ckpt'
     output_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -152,7 +158,18 @@ def main():
 
     # -----------------------start training---------------------------
     logger.info('**********************Start training %s/%s(%s)**********************'
-                % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
+                % (cfg.EXP_GROUP_PATH, cfg.TAG, args.tag))
+
+    # wandb
+    if args.wandb:
+        wandb.login(key="afc534a6cee9821884737295e042db01471fed6a")
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="DVF",
+            name=f"{args.tag}_{datetime.datetime.now().strftime(f'%Y%m%d-%H%M%S')}",
+            config=cfg,
+        )
+
     train_model(
         model,
         optimizer,
@@ -170,14 +187,16 @@ def main():
         lr_warmup_scheduler=lr_warmup_scheduler,
         ckpt_save_interval=args.ckpt_save_interval,
         max_ckpt_save_num=args.max_ckpt_save_num,
-        merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch
+        merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,
+        enable_wandb=args.wandb,
+        debug=args.debug,
     )
 
     logger.info('**********************End training %s/%s(%s)**********************\n\n\n'
-                % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
+                % (cfg.EXP_GROUP_PATH, cfg.TAG, args.tag))
 
     logger.info('**********************Start evaluation %s/%s(%s)**********************' %
-                (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
+                (cfg.EXP_GROUP_PATH, cfg.TAG, args.tag))
 
     test_set, test_loader, sampler = build_dataloader(
         dataset_cfg=cfg.DATA_CONFIG,
@@ -192,13 +211,15 @@ def main():
     repeat_eval_ckpt(
         model.module if dist_train else model,
         test_loader, args, eval_output_dir, logger, ckpt_dir,
-        dist_test=dist_train
+        dist_test=dist_train,
+        enable_wandb=args.wandb,
     )
 
     logger.info('**********************End evaluation %s/%s(%s)**********************' %
-                (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
+                (cfg.EXP_GROUP_PATH, cfg.TAG, args.tag))
 
-
+    if args.wandb:
+        wandb.finish()
 
 
 if __name__ == '__main__':
