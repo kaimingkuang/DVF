@@ -62,6 +62,8 @@ def parse_config():
 
 def main():
     args, cfg = parse_config()
+    if args.gpu != "":
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
     if args.launcher == 'none':
         dist_train = False
@@ -94,8 +96,6 @@ def main():
 
     # log to file
     logger.info('**********************Start logging**********************')
-    if args.gpu != "":
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     gpu_list = os.environ['CUDA_VISIBLE_DEVICES'] if 'CUDA_VISIBLE_DEVICES' in os.environ.keys() else 'ALL'
     logger.info('CUDA_VISIBLE_DEVICES=%s' % gpu_list)
 

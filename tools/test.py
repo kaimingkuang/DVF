@@ -115,7 +115,7 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
         )
 
         if enable_wandb:
-            wandb.log(tb_dict, step=int(cur_epoch_id))
+            wandb.log(tb_dict)
 
         if cfg.LOCAL_RANK == 0:
             for key, val in tb_dict.items():

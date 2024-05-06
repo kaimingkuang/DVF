@@ -1,7 +1,9 @@
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from pcdet.datasets.augmentor.X_transform import X_TRANS
 import torch
+import math
 
 def bilinear_interpolate_torch(im, x, y):
     """
@@ -45,6 +47,9 @@ class BEVPool(nn.Module):
         self.x_trans = X_TRANS()
         self.point_cloud_range = point_cloud_range
         self.voxel_size=voxel_size
+        
+        if self.model_cfg["SQUEEZE_METHOD"] == "dvf":
+            self.dvf_module = DVFModule(16, 64)
 
     def get_pseudo_points(self, pts_range=[0, -40, -3, 70.4, 40, 1], voxel_size=[0.05, 0.05, 0.05], stride=8):
         x_stride = voxel_size[0] * stride
@@ -136,7 +141,10 @@ class BEVPool(nn.Module):
             encoded_spconv_tensor = batch_dict['encoded_spconv_tensor'+rot_num_id]
             spatial_features = encoded_spconv_tensor.dense()
             N, C, D, H, W = spatial_features.shape
-            spatial_features = spatial_features.view(N, C * D, H, W)
+            if self.model_cfg["SQUEEZE_METHOD"] == "reshape":
+                spatial_features = spatial_features.view(N, C * D, H, W)
+            else:
+                spatial_features = self.dvf_module(spatial_features)
 
             batch_dict['spatial_features'+rot_num_id] = spatial_features
 
@@ -164,3 +172,54 @@ class BEVPool(nn.Module):
 
 
         return batch_dict
+
+
+class PositionEncoding3D(nn.Module):
+
+    def __init__(self, channels):
+        super().__init__()
+        self.channels = channels
+
+    def forward(self, x):
+        dim_x, dim_y, dim_z = x.size()[2:]
+        xs = torch.arange(dim_x).unsqueeze(1)
+        ys = torch.arange(dim_y).unsqueeze(1)
+        zs = torch.arange(dim_z).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, self.channels, 2) * (-math.log(10000.0) / self.channels))
+        pe_x = torch.cat([torch.sin(xs * div_term), torch.cos(xs * div_term)], dim=-1)
+        pe_y = torch.cat([torch.sin(ys * div_term), torch.cos(ys * div_term)], dim=-1)
+        pe_z = torch.cat([torch.sin(zs * div_term), torch.cos(zs * div_term)], dim=-1)
+        pe_x = pe_x[:, None, None, :].repeat(1, dim_y, dim_z, 1)
+        pe_y = pe_y[None, :, None, :].repeat(dim_x, 1, dim_z, 1)
+        pe_z = pe_z[None, None, :, :].repeat(dim_x, dim_y, 1, 1)
+        pe = torch.cat([pe_x, pe_y, pe_z], dim=-1).permute(3, 0, 1, 2)
+
+        b = x.size(0)
+        return pe[None, ...].repeat(b, 1, 1, 1, 1).type(x.dtype).to(x.device)
+
+
+class DVFModule(nn.Module):
+
+    def __init__(self, pc_channels, feat_channels):
+        super().__init__()
+
+        self.pe_module = PositionEncoding3D(pc_channels)
+        self.fc = nn.Conv3d(pc_channels * 3 + feat_channels, 1, 1)
+
+    def forward(self, x):
+        pe = self.pe_module(x)
+        feats = torch.cat([x, pe], dim=1)
+        weights = F.softmax(self.fc(feats), dim=2)
+        out = (x * weights).sum(dim=2).squeeze(dim=1)
+
+        return out
+
+
+if __name__ == "__main__":
+    pc_channels = 16
+    feat_channels = 128
+    shape = (64, 64, 64)
+    module = DVFModule(pc_channels, feat_channels)
+    inputs = torch.zeros(4, feat_channels, *shape)
+    outputs = module(inputs)
+    print(outputs.size())

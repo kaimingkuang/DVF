@@ -128,9 +128,9 @@ MODEL:
 
     MAP_TO_BEV:
         NAME: BEVPool
-        NUM_BEV_FEATURES: 256
+        NUM_BEV_FEATURES: 64
         ALIGN_METHOD: 'max'
-        SQUEEZE_METHOD: reshape
+        SQUEEZE_METHOD: dvf
 
     BACKBONE_2D:
         NAME: BaseBEVBackbone
