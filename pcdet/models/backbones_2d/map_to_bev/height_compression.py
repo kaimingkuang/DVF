@@ -207,10 +207,11 @@ class DVFModule(nn.Module):
         self.fc = nn.Conv3d(pc_channels * 3 + feat_channels, 1, 1)
 
     def forward(self, x):
+        n, c, d, h, w = x.size()
         pe = self.pe_module(x)
         feats = torch.cat([x, pe], dim=1)
         weights = F.softmax(self.fc(feats), dim=2)
-        out = (x * weights).sum(dim=2).squeeze(dim=1)
+        out = (x * weights).view(n, c * d, h, w)
 
         return out
 
@@ -221,5 +222,6 @@ if __name__ == "__main__":
     shape = (64, 64, 64)
     module = DVFModule(pc_channels, feat_channels)
     inputs = torch.zeros(4, feat_channels, *shape)
+    print(inputs.size())
     outputs = module(inputs)
     print(outputs.size())

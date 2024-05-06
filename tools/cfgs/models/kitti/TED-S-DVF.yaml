@@ -128,7 +128,7 @@ MODEL:
 
     MAP_TO_BEV:
         NAME: BEVPool
-        NUM_BEV_FEATURES: 64
+        NUM_BEV_FEATURES: 256
         ALIGN_METHOD: 'max'
         SQUEEZE_METHOD: dvf
 
