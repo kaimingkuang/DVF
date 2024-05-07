@@ -81,7 +81,7 @@ def main():
         args.batch_size = args.batch_size // total_gpus
 
     args.epochs = cfg.OPTIMIZATION.NUM_EPOCHS if args.epochs is None else args.epochs
-    args.epochs = 2 if args.debug else args.epochs
+    args.epochs = 1 if args.debug else args.epochs
 
     if args.fix_random_seed:
         common_utils.set_random_seed(666)
@@ -170,10 +170,22 @@ def main():
             config=cfg,
         )
 
+    test_set, test_loader, sampler = build_dataloader(
+        dataset_cfg=cfg.DATA_CONFIG,
+        class_names=cfg.CLASS_NAMES,
+        batch_size=args.batch_size,
+        dist=dist_train, workers=args.workers, logger=logger, training=False
+    )
+    eval_output_dir = output_dir / 'eval' / ('eval_with_train')
+    eval_output_dir.mkdir(parents=True, exist_ok=True)
+
     train_model(
         model,
         optimizer,
         train_loader,
+        test_loader,
+        logger,
+        eval_output_dir,
         model_func=model_fn_decorator(),
         lr_scheduler=lr_scheduler,
         optim_cfg=cfg.OPTIMIZATION,
@@ -198,22 +210,14 @@ def main():
     logger.info('**********************Start evaluation %s/%s(%s)**********************' %
                 (cfg.EXP_GROUP_PATH, cfg.TAG, args.tag))
 
-    test_set, test_loader, sampler = build_dataloader(
-        dataset_cfg=cfg.DATA_CONFIG,
-        class_names=cfg.CLASS_NAMES,
-        batch_size=args.batch_size,
-        dist=dist_train, workers=args.workers, logger=logger, training=False
-    )
-    eval_output_dir = output_dir / 'eval' / ('eval_with_train')
-    eval_output_dir.mkdir(parents=True, exist_ok=True)
     args.start_epoch = max(args.epochs - 10, 0)  # Only evaluate the last 10 epochs
 
-    repeat_eval_ckpt(
-        model.module if dist_train else model,
-        test_loader, args, eval_output_dir, logger, ckpt_dir,
-        dist_test=dist_train,
-        enable_wandb=args.wandb,
-    )
+    # repeat_eval_ckpt(
+    #     model.module if dist_train else model,
+    #     test_loader, args, eval_output_dir, logger, ckpt_dir,
+    #     dist_test=dist_train,
+    #     enable_wandb=args.wandb,
+    # )
 
     logger.info('**********************End evaluation %s/%s(%s)**********************' %
                 (cfg.EXP_GROUP_PATH, cfg.TAG, args.tag))

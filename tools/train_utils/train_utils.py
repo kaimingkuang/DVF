@@ -11,6 +11,9 @@ import pcdet.datasets.augmentor.augmentor_utils as uti
 from collections import defaultdict
 import wandb
 
+from eval_utils.eval_utils import eval_one_epoch
+from pcdet.config import cfg
+
 
 def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, accumulated_iter, optim_cfg,
                     rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False, enable_wandb=False,
@@ -84,7 +87,7 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         pbar.close()
     return accumulated_iter
 
-def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_cfg,
+def train_model(model, optimizer, train_loader, test_loader, logger, eval_output_dir, model_func, lr_scheduler, optim_cfg,
                 start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, train_sampler=None,
                 lr_warmup_scheduler=None, ckpt_save_interval=1, max_ckpt_save_num=50,
                 merge_all_iters_to_one_epoch=False, enable_wandb=False, debug=False):
@@ -120,8 +123,7 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
 
             # save trained model
             trained_epoch = cur_epoch + 1
-            if trained_epoch % ckpt_save_interval == 0 and rank == 0:
-
+            if (trained_epoch % ckpt_save_interval == 0 or trained_epoch >= 20) and rank == 0:
                 ckpt_list = glob.glob(str(ckpt_save_dir / 'checkpoint_epoch_*.pth'))
                 ckpt_list.sort(key=os.path.getmtime)
 
@@ -133,6 +135,13 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
                 save_checkpoint(
                     checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
                 )
+
+                cur_result_dir = eval_output_dir / ('epoch_%d' % trained_epoch) / cfg.DATA_CONFIG.DATA_SPLIT['test']
+                tb_dict = eval_one_epoch(cfg, model, test_loader, trained_epoch,
+                    logger, result_dir=cur_result_dir, save_to_file=False)
+                if enable_wandb:
+                    wandb.log(tb_dict)
+
 
 def model_state_to_cpu(model_state):
     model_state_cpu = type(model_state)()  # ordered dict
