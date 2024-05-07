@@ -50,6 +50,8 @@ class BEVPool(nn.Module):
         
         if self.model_cfg["SQUEEZE_METHOD"] == "dvf":
             self.dvf_module = DVFModule(16, 64)
+        elif self.model_cfg["SQUEEZE_METHOD"] == "dvfz":
+            self.dvf_module = DVFZModule(64)
 
     def get_pseudo_points(self, pts_range=[0, -40, -3, 70.4, 40, 1], voxel_size=[0.05, 0.05, 0.05], stride=8):
         x_stride = voxel_size[0] * stride
@@ -198,29 +200,73 @@ class PositionEncoding3D(nn.Module):
         return pe[None, ...].repeat(b, 1, 1, 1, 1).type(x.dtype).to(x.device)
 
 
+class PositionEncodingZ(nn.Module):
+
+    def __init__(self, channels):
+        super().__init__()
+        self.channels = channels
+        # self.linear = nn.Linear(channels, channels)
+
+    def forward(self, x):
+        dim_x, dim_y, dim_z = x.size()[2:]
+        b = x.size(0)
+        zs = torch.arange(dim_z).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, self.channels, 2) * (-math.log(10000.0) / self.channels))
+        pe_z = torch.cat([torch.sin(zs * div_term), torch.cos(zs * div_term)], dim=-1).type(x.dtype).to(x.device)
+        # pe_z = self.linear(pe_z)
+        pe_z = pe_z.permute(1, 0)
+        pe_z = pe_z[None, :, None, None, :].repeat(b, 1, dim_x, dim_y, 1)
+
+        return pe_z
+
+
 class DVFModule(nn.Module):
 
-    def __init__(self, pc_channels, feat_channels):
+    def __init__(self, pe_channels, feat_channels):
         super().__init__()
 
-        self.pe_module = PositionEncoding3D(pc_channels)
-        self.fc = nn.Conv3d(pc_channels * 3 + feat_channels, 1, 1)
+        self.pe_module = PositionEncoding3D(pe_channels)
+        self.mlp = nn.Sequential(
+            nn.Conv3d(pe_channels * 3 + feat_channels, feat_channels, 1),
+            nn.BatchNorm3d(feat_channels),
+            nn.LeakyReLU(inplace=True),
+            nn.Conv3d(feat_channels, feat_channels // 2, 1),
+            nn.BatchNorm3d(feat_channels // 2),
+            nn.LeakyReLU(inplace=True),
+            nn.Conv3d(feat_channels // 2, 1, 1),
+        )
 
     def forward(self, x):
         n, c, d, h, w = x.size()
         pe = self.pe_module(x)
         feats = torch.cat([x, pe], dim=1)
-        weights = F.softmax(self.fc(feats), dim=2)
+        weights = F.softmax(self.mlp(feats), dim=2)
         out = (x * weights).view(n, c * d, h, w)
 
         return out
 
 
+class DVFZModule(nn.Module):
+
+    def __init__(self, feat_channels):
+        super().__init__()
+
+        self.pe_module = PositionEncodingZ(feat_channels)
+
+    def forward(self, x):
+        n, c, d, h, w = x.size()
+        pe = self.pe_module(x)
+        # print(pe.size(), x.size())
+        out = (x + pe).view(n, c * d, h, w)
+
+        return out
+
+
 if __name__ == "__main__":
-    pc_channels = 16
+    pe_channels = 16
     feat_channels = 128
-    shape = (64, 64, 64)
-    module = DVFModule(pc_channels, feat_channels)
+    shape = (4, 64, 64)
+    module = DVFModule(pe_channels, feat_channels)
     inputs = torch.zeros(4, feat_channels, *shape)
     print(inputs.size())
     outputs = module(inputs)
