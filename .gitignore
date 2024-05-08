@@ -164,3 +164,4 @@ data/
 output/
 data
 tools/wandb/
+tools/train.sh

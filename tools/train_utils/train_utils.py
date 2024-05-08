@@ -80,12 +80,11 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         
     for k in loss_train.keys():
         loss_train[k] /= total_it_each_epoch
-    if enable_wandb:
-        wandb.log(loss_train)
 
     if rank == 0:
         pbar.close()
-    return accumulated_iter
+    return accumulated_iter, loss_train
+
 
 def train_model(model, optimizer, train_loader, test_loader, logger, eval_output_dir, model_func, lr_scheduler, optim_cfg,
                 start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, train_sampler=None,
@@ -109,7 +108,7 @@ def train_model(model, optimizer, train_loader, test_loader, logger, eval_output
                 cur_scheduler = lr_warmup_scheduler
             else:
                 cur_scheduler = lr_scheduler
-            accumulated_iter = train_one_epoch(
+            accumulated_iter, metrics_train = train_one_epoch(
                 model, optimizer, train_loader, model_func,
                 lr_scheduler=cur_scheduler,
                 accumulated_iter=accumulated_iter, optim_cfg=optim_cfg,
@@ -139,8 +138,9 @@ def train_model(model, optimizer, train_loader, test_loader, logger, eval_output
                 cur_result_dir = eval_output_dir / ('epoch_%d' % trained_epoch) / cfg.DATA_CONFIG.DATA_SPLIT['test']
                 tb_dict = eval_one_epoch(cfg, model, test_loader, trained_epoch,
                     logger, result_dir=cur_result_dir, save_to_file=False)
-                if enable_wandb:
-                    wandb.log(tb_dict)
+                metrics_train.update(tb_dict)
+            if enable_wandb:
+                wandb.log(metrics_train)
 
 
 def model_state_to_cpu(model_state):

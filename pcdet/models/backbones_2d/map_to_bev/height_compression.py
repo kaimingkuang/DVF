@@ -176,7 +176,7 @@ class BEVPool(nn.Module):
         return batch_dict
 
 
-class PositionEncoding3D(nn.Module):
+class PositionalEncoding3D(nn.Module):
 
     def __init__(self, channels):
         super().__init__()
@@ -200,12 +200,12 @@ class PositionEncoding3D(nn.Module):
         return pe[None, ...].repeat(b, 1, 1, 1, 1).type(x.dtype).to(x.device)
 
 
-class PositionEncodingZ(nn.Module):
+class PositionalEncodingZ(nn.Module):
 
     def __init__(self, channels):
         super().__init__()
         self.channels = channels
-        # self.linear = nn.Linear(channels, channels)
+        self.linear = nn.Linear(channels, channels)
 
     def forward(self, x):
         dim_x, dim_y, dim_z = x.size()[2:]
@@ -213,7 +213,7 @@ class PositionEncodingZ(nn.Module):
         zs = torch.arange(dim_z).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, self.channels, 2) * (-math.log(10000.0) / self.channels))
         pe_z = torch.cat([torch.sin(zs * div_term), torch.cos(zs * div_term)], dim=-1).type(x.dtype).to(x.device)
-        # pe_z = self.linear(pe_z)
+        pe_z = self.linear(pe_z)
         pe_z = pe_z.permute(1, 0)
         pe_z = pe_z[None, :, None, None, :].repeat(b, 1, dim_x, dim_y, 1)
 
@@ -225,7 +225,7 @@ class DVFModule(nn.Module):
     def __init__(self, pe_channels, feat_channels):
         super().__init__()
 
-        self.pe_module = PositionEncoding3D(pe_channels)
+        self.pe_module = PositionalEncoding3D(pe_channels)
         self.mlp = nn.Sequential(
             nn.Conv3d(pe_channels * 3 + feat_channels, feat_channels, 1),
             nn.BatchNorm3d(feat_channels),
@@ -251,7 +251,7 @@ class DVFZModule(nn.Module):
     def __init__(self, feat_channels):
         super().__init__()
 
-        self.pe_module = PositionEncodingZ(feat_channels)
+        self.pe_module = PositionalEncodingZ(feat_channels)
 
     def forward(self, x):
         n, c, d, h, w = x.size()
@@ -266,7 +266,7 @@ if __name__ == "__main__":
     pe_channels = 16
     feat_channels = 128
     shape = (4, 64, 64)
-    module = DVFModule(pe_channels, feat_channels)
+    module = DVFZModule(feat_channels)
     inputs = torch.zeros(4, feat_channels, *shape)
     print(inputs.size())
     outputs = module(inputs)
