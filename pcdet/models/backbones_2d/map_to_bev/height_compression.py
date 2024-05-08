@@ -240,8 +240,8 @@ class DVFModule(nn.Module):
         n, c, d, h, w = x.size()
         pe = self.pe_module(x)
         feats = torch.cat([x, pe], dim=1)
-        weights = F.softmax(self.mlp(feats), dim=2)
-        out = (x * weights).view(n, c * d, h, w)
+        weights = F.sigmoid(self.mlp(feats))
+        out = (x * weights + x).view(n, c * d, h, w)
 
         return out
 
